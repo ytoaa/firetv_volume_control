@@ -58,7 +58,7 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
                 } else {
                     reduceVolume();
                 }
-                showDialog();
+//                showDialog();
                 return true;
             }
         }
@@ -132,12 +132,18 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
     }
 
     private void increaseVolume() {
-        Log.i(TAG, "yolo, increasing volume");
-        audioManager.adjustStreamVolume(STREAM_MUSIC, AudioManager.ADJUST_RAISE, 0);
+        audioManager.adjustStreamVolume(
+                STREAM_MUSIC,
+                AudioManager.ADJUST_RAISE,
+                AudioManager.FLAG_SHOW_UI
+        );
     }
 
     private void reduceVolume() {
-        Log.i(TAG, "yolo, reducing volume");
-        audioManager.adjustStreamVolume(STREAM_MUSIC, AudioManager.ADJUST_LOWER, 0);
+        audioManager.adjustStreamVolume(
+                STREAM_MUSIC,
+                AudioManager.ADJUST_LOWER,
+                AudioManager.FLAG_SHOW_UI
+        );
     }
 }
