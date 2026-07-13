@@ -28,6 +28,15 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
     private final DynamicsProcessingController attenuationController =
             new DynamicsProcessingController();
     private android.media.audiofx.DynamicsProcessing dynamicsProcessing;
+    private VolumeSettings volumeSettings;
+
+    @Override
+    public void onCreate() {
+        super.onCreate();
+        volumeSettings = new VolumeSettings(
+                VolumeSettings.from(getSharedPreferences(VolumeSettings.class.getName(), MODE_PRIVATE)));
+        attenuationController.setStep(volumeSettings.getStep());
+    }
     private WindowManager windowManager;
     private View feedbackView;
     private boolean dynamicsInitializationAttempted;
@@ -65,6 +74,8 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
         }
 
         if (event.getAction() == ACTION_DOWN) {
+            // The settings activity can change this while the service remains connected.
+            attenuationController.setStep(volumeSettings.getStep());
             float gainDb = attenuationController.stepForKey(keyCode);
             applyCurrentGain(gainDb, 0);
             Log.i(TAG, "DYNAMICS_STEP key=" + KeyEvent.keyCodeToString(keyCode)
@@ -97,7 +108,18 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
             // the explicit two-channel engine architecture even though the effect is registered.
             DynamicsProcessing effect = new DynamicsProcessing(
                     DYNAMICS_PRIORITY, GLOBAL_AUDIO_SESSION, null);
-            effect.setInputGainAllChannelsTo(attenuationController.getGainDb());
+            try {
+                effect.setInputGainAllChannelsTo(attenuationController.getGainDb());
+            } catch (RuntimeException muteException) {
+                if (!attenuationController.isMuted()) throw muteException;
+                effect.setInputGainAllChannelsTo(
+                        DynamicsProcessingController.MUTE_FALLBACK_GAIN_DB);
+                attenuationController.markMuteFallback();
+                Log.w(TAG, "DYNAMICS_MUTE_FALLBACK requestedDb="
+                        + formatDb(DynamicsProcessingController.MUTE_GAIN_DB)
+                        + " appliedDb=" + formatDb(DynamicsProcessingController.MUTE_FALLBACK_GAIN_DB),
+                        muteException);
+            }
             effect.setEnabled(true);
             dynamicsProcessing = effect;
             attenuationController.markActive();
@@ -125,6 +147,23 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
             String message = runtimeMessage(exception);
             Log.e(TAG, "DYNAMICS_APPLY_FAILURE gainDb=" + formatDb(gainDb)
                     + " retryCount=" + retryCount, exception);
+            if (attenuationController.isMuted()) {
+                try {
+                    dynamicsProcessing.setInputGainAllChannelsTo(
+                            DynamicsProcessingController.MUTE_FALLBACK_GAIN_DB);
+                    attenuationController.markMuteFallback();
+                    Log.w(TAG, "DYNAMICS_MUTE_FALLBACK requestedDb="
+                            + formatDb(DynamicsProcessingController.MUTE_GAIN_DB)
+                            + " appliedDb="
+                            + formatDb(DynamicsProcessingController.MUTE_FALLBACK_GAIN_DB), exception);
+                    showFeedback();
+                    return;
+                } catch (RuntimeException fallbackException) {
+                    Log.e(TAG, "DYNAMICS_MUTE_FALLBACK_FAILURE appliedDb="
+                            + formatDb(DynamicsProcessingController.MUTE_FALLBACK_GAIN_DB),
+                            fallbackException);
+                }
+            }
             if (DynamicsProcessingController.shouldRetryGainApply(retryCount)) {
                 // A stale/lost effect can fail on apply. Release and recreate it once, then
                 // reapply the requested gain through initialization.
@@ -198,10 +237,8 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
         TextView attenuationText = feedbackView.findViewById(R.id.volume_text);
         ProgressBar attenuationProgress = feedbackView.findViewById(R.id.volume_progress);
         attenuationText.setText(text);
-        attenuationProgress.setMax((int) (DynamicsProcessingController.MAX_GAIN_DB
-                - DynamicsProcessingController.MIN_GAIN_DB));
-        attenuationProgress.setProgress((int) (attenuationController.getGainDb()
-                - DynamicsProcessingController.MIN_GAIN_DB));
+        attenuationProgress.setMax(DynamicsProcessingController.MAX_LEVEL);
+        attenuationProgress.setProgress(attenuationController.getLevel());
         mainHandler.removeCallbacks(dismissFeedbackRunnable);
         mainHandler.postDelayed(dismissFeedbackRunnable, FEEDBACK_DURATION_MS);
     }

@@ -1,98 +1,117 @@
 package com.example.volumecontrolservice;
 
+import java.util.Arrays;
 import java.util.Locale;
 
-/** Pure state machine for bounded DynamicsProcessing gain and effect-path mute. */
+/** Pure state machine for bounded level-based DynamicsProcessing gain and mute. */
 final class DynamicsProcessingController {
-    // +6 dB is a deliberately conservative amplification ceiling: it supports positive gain
-    // without the clipping risk and excessive output boost of a larger experimental range.
-    static final float MAX_GAIN_DB = 6.0f;
-    // -80 dB is near-silence while remaining within the Android DynamicsProcessing gain range
-    // used by API 28+ devices; it avoids relying on a separate platform mute route.
-    static final float MUTE_GAIN_DB = -80.0f;
+    static final int MIN_LEVEL = 0;
+    static final int MAX_LEVEL = 40;
+    static final int DEFAULT_LEVEL = 20;
+    static final float MAX_GAIN_DB = 20.0f;
+    static final float MUTE_GAIN_DB = -100.0f;
+    static final float MUTE_FALLBACK_GAIN_DB = -80.0f;
+    static final float MIN_NON_MUTE_GAIN_DB = -20.0f;
     static final float MIN_GAIN_DB = MUTE_GAIN_DB;
-    static final float STEP_DB = 2.0f;
+    static final int DEFAULT_STEP = 2;
+    private static final int[] SUPPORTED_STEPS = {1, 2, 4, 8};
 
-    enum Status {
-        NOT_INITIALIZED,
-        ACTIVE,
-        ERROR
-    }
+    enum Status { NOT_INITIALIZED, ACTIVE, ERROR }
 
-    private float gainDb = 0.0f;
-    private float lastNonMutedGainDb = 0.0f;
+    private int level = DEFAULT_LEVEL;
+    private int lastNonMutedLevel = DEFAULT_LEVEL;
+    private int step = DEFAULT_STEP;
     private boolean muted;
     private Status status = Status.NOT_INITIALIZED;
     private String errorMessage = "not initialized";
+    private boolean muteFallback;
 
-    static boolean shouldRetryGainApply(int retryCount) {
-        return retryCount == 0;
+    static boolean shouldRetryGainApply(int retryCount) { return retryCount == 0; }
+
+    static float levelToDb(int requestedLevel) {
+        int value = clampLevel(requestedLevel);
+        if (value == 0) return MUTE_GAIN_DB;
+        if (value <= DEFAULT_LEVEL) {
+            return MIN_NON_MUTE_GAIN_DB
+                    + (value - 1) * (-MIN_NON_MUTE_GAIN_DB / (DEFAULT_LEVEL - 1));
+        }
+        return (value - DEFAULT_LEVEL) * (MAX_GAIN_DB / (MAX_LEVEL - DEFAULT_LEVEL));
     }
 
-    float getGainDb() {
-        return gainDb;
+    static int dbToLevel(float requestedDb) {
+        float db = Math.max(MIN_GAIN_DB, Math.min(MAX_GAIN_DB, requestedDb));
+        if (db < MIN_NON_MUTE_GAIN_DB) return 0;
+        if (db <= 0.0f) return Math.round(1 + (db - MIN_NON_MUTE_GAIN_DB)
+                * (DEFAULT_LEVEL - 1) / -MIN_NON_MUTE_GAIN_DB);
+        return Math.round(DEFAULT_LEVEL + db * (MAX_LEVEL - DEFAULT_LEVEL) / MAX_GAIN_DB);
     }
 
-    boolean isMuted() {
-        return muted;
+    static boolean isSupportedStep(int value) {
+        for (int supported : SUPPORTED_STEPS) if (supported == value) return true;
+        return false;
     }
 
-    Status getStatus() {
-        return status;
+    static int[] supportedSteps() { return Arrays.copyOf(SUPPORTED_STEPS, SUPPORTED_STEPS.length); }
+
+    int getLevel() { return level; }
+    float getGainDb() { return levelToDb(level); }
+    boolean isMuted() { return muted; }
+    int getStep() { return step; }
+    Status getStatus() { return status; }
+
+    void setLevel(int requestedLevel) {
+        int value = clampLevel(requestedLevel);
+        if (value == MIN_LEVEL) {
+            if (!muted) lastNonMutedLevel = level;
+            muted = true;
+        } else {
+            muted = false;
+            lastNonMutedLevel = value;
+            muteFallback = false;
+        }
+        level = value;
     }
 
-    void markActive() {
-        status = Status.ACTIVE;
-        errorMessage = "";
+    void setStep(int requestedStep) {
+        if (isSupportedStep(requestedStep)) step = requestedStep;
     }
 
+    void markActive() { status = Status.ACTIVE; errorMessage = ""; }
+    void markMuteFallback() { muteFallback = true; }
     void markError(String message) {
         status = Status.ERROR;
         errorMessage = message == null || message.length() == 0 ? "unknown failure" : message;
     }
 
-    float stepForKey(int keyCode) {
-        if (MediaKeyPolicy.isMuteKey(keyCode)) {
-            return toggleMute();
-        }
-        if (muted) {
-            return gainDb;
-        }
-        if (MediaKeyPolicy.isVolumeUpKey(keyCode)) {
-            setNonMutedGain(gainDb + STEP_DB);
-        } else if (MediaKeyPolicy.isVolumeDownKey(keyCode)) {
-            setNonMutedGain(gainDb - STEP_DB);
-        }
-        return gainDb;
+    int stepForKey(int keyCode) {
+        if (MediaKeyPolicy.isMuteKey(keyCode)) return toggleMute();
+        if (muted) return level;
+        if (MediaKeyPolicy.isVolumeUpKey(keyCode)) setLevel(level + step);
+        else if (MediaKeyPolicy.isVolumeDownKey(keyCode)) setLevel(level - step);
+        return level;
     }
 
-    float toggleMute() {
+    int toggleMute() {
         if (muted) {
             muted = false;
-            gainDb = lastNonMutedGainDb;
+            level = lastNonMutedLevel;
+            muteFallback = false;
         } else {
-            lastNonMutedGainDb = gainDb;
+            lastNonMutedLevel = level;
             muted = true;
-            gainDb = MUTE_GAIN_DB;
+            level = MIN_LEVEL;
         }
-        return gainDb;
+        return level;
     }
 
     String overlayText() {
-        String gain = String.format(Locale.US, "%.0f", gainDb);
-        String mute = muted ? "ON" : "OFF";
-        if (status == Status.ACTIVE) {
-            return "GAIN: " + gain + " dB | MUTE: " + mute + " | EFFECT: ACTIVE";
-        }
-        return "GAIN: " + gain + " dB | MUTE: " + mute + " | EFFECT: ERROR: " + errorMessage;
+        String state;
+        if (status == Status.ERROR) state = "ERROR: " + errorMessage;
+        else if (muted) state = muteFallback ? "MUTED (effect fallback -80 dB)" : "MUTED";
+        else if (status == Status.ACTIVE) state = "ACTIVE";
+        else state = "ERROR: " + errorMessage;
+        return String.format(Locale.US, "Volume %d / 40 | %s", level, state);
     }
 
-    private void setNonMutedGain(float value) {
-        lastNonMutedGainDb = clamp(value);
-        gainDb = lastNonMutedGainDb;
-    }
-
-    private static float clamp(float value) {
-        return Math.max(MIN_GAIN_DB, Math.min(MAX_GAIN_DB, value));
-    }
+    private static int clampLevel(int value) { return Math.max(MIN_LEVEL, Math.min(MAX_LEVEL, value)); }
 }
