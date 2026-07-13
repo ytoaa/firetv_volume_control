@@ -23,7 +23,6 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
     private static final long FEEDBACK_DURATION_MS = 1500L;
     private static final int DYNAMICS_PRIORITY = 1000;
     private static final int GLOBAL_AUDIO_SESSION = 0;
-    private static final int OUTPUT_CHANNEL_COUNT = 2;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private final DynamicsProcessingController attenuationController =
@@ -93,17 +92,10 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
         }
 
         try {
-            DynamicsProcessing.Config config = new DynamicsProcessing.Config.Builder(
-                    DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION,
-                    OUTPUT_CHANNEL_COUNT,
-                    false, 0,
-                    false, 0,
-                    false, 0,
-                    false)
-                    .setInputGainAllChannelsTo(DynamicsProcessingController.MAX_GAIN_DB)
-                    .build();
+            // Let the API/device choose the channel count for global session 0. Fire OS rejects
+            // the explicit two-channel engine architecture even though the effect is registered.
             DynamicsProcessing effect = new DynamicsProcessing(
-                    DYNAMICS_PRIORITY, GLOBAL_AUDIO_SESSION, config);
+                    DYNAMICS_PRIORITY, GLOBAL_AUDIO_SESSION, null);
             effect.setInputGainAllChannelsTo(DynamicsProcessingController.MAX_GAIN_DB);
             effect.setEnabled(true);
             dynamicsProcessing = effect;
