@@ -57,11 +57,21 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
             } else {
                 reduceVolume();
             }
+            showFeedback(MediaKeyPolicy.feedbackFor(keyCode));
         }
 
         // Consume both key-down and key-up to prevent the foreground app from
         // receiving only half of a remapped media-key event.
         return true;
+    }
+
+    private void showFeedback(MediaKeyPolicy.Feedback feedback) {
+        if (feedback == MediaKeyPolicy.Feedback.NONE) {
+            return;
+        }
+        int currentVolume = audioManager.getStreamVolume(STREAM_MUSIC);
+        int maximumVolume = audioManager.getStreamMaxVolume(STREAM_MUSIC);
+        Toast.makeText(this, MediaKeyPolicy.volumeFeedback(currentVolume, maximumVolume), LENGTH_SHORT).show();
     }
 
     private void showDialog() {
