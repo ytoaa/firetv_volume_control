@@ -6,6 +6,7 @@ import static android.widget.Toast.LENGTH_SHORT;
 
 import android.content.Context;
 import android.media.AudioManager;
+import android.media.audiofx.DynamicsProcessing;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
@@ -22,11 +23,15 @@ import android.widget.Toast;
 public class VolumeControlService extends android.accessibilityservice.AccessibilityService {
     private static final String TAG = "VolumeControlService";
     private static final long FEEDBACK_DURATION_MS = 1500L;
+    private static final int DYNAMICS_PRIORITY = 1000;
+    private static final int GLOBAL_AUDIO_SESSION = 0;
+    private static final int OUTPUT_CHANNEL_COUNT = 2;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private AudioManager audioManager;
     private WindowManager windowManager;
     private View feedbackView;
+    private DynamicsProcessing dynamicsProcessing;
 
     @Override
     protected void onServiceConnected() {
@@ -42,11 +47,13 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
     @Override
     public void onInterrupt() {
         dismissFeedback();
+        releaseDynamicsProcessing();
     }
 
     @Override
     public void onDestroy() {
         dismissFeedback();
+        releaseDynamicsProcessing();
         super.onDestroy();
     }
 
@@ -58,11 +65,7 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
         }
 
         if (event.getAction() == ACTION_DOWN) {
-            if (MediaKeyPolicy.isVolumeUpKey(keyCode)) {
-                adjustVolume(AudioManager.ADJUST_RAISE);
-            } else {
-                adjustVolume(AudioManager.ADJUST_LOWER);
-            }
+            applyTestAttenuation();
             showFeedback();
         }
 
@@ -71,21 +74,13 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
         return true;
     }
 
-    private void adjustVolume(int direction) {
-        if (audioManager == null) {
-            Log.w(TAG, "Ignoring volume key before service connection");
-            return;
-        }
-        audioManager.adjustStreamVolume(STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI);
-    }
-
     private void showFeedback() {
         if (audioManager == null) {
             return;
         }
         final int currentVolume = audioManager.getStreamVolume(STREAM_MUSIC);
         final int maximumVolume = audioManager.getStreamMaxVolume(STREAM_MUSIC);
-        final String text = MediaKeyPolicy.volumeFeedback(currentVolume, maximumVolume);
+        final String text = MediaKeyPolicy.attenuationFeedback();
 
         mainHandler.post(() -> {
             if (!MediaKeyPolicy.canUseAccessibilityOverlay(Build.VERSION.SDK_INT)) {
@@ -94,6 +89,52 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
             }
             showAccessibilityOverlay(text, currentVolume, maximumVolume);
         });
+    }
+
+    @android.annotation.TargetApi(Build.VERSION_CODES.P)
+    private void applyTestAttenuation() {
+        if (!MediaKeyPolicy.canUseDynamicsProcessing(Build.VERSION.SDK_INT)) {
+            Log.w(TAG, "DynamicsProcessing test attenuation requires API 28+");
+            return;
+        }
+        if (dynamicsProcessing != null) {
+            return;
+        }
+        try {
+            DynamicsProcessing.Config config = new DynamicsProcessing.Config.Builder(
+                    DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION,
+                    OUTPUT_CHANNEL_COUNT,
+                    false, 0,
+                    false, 0,
+                    false, 0,
+                    false)
+                    .setInputGainAllChannelsTo(MediaKeyPolicy.TEST_ATTENUATION_DB)
+                    .build();
+            DynamicsProcessing effect = new DynamicsProcessing(
+                    DYNAMICS_PRIORITY, GLOBAL_AUDIO_SESSION, config);
+            effect.setInputGainAllChannelsTo(MediaKeyPolicy.TEST_ATTENUATION_DB);
+            effect.setEnabled(true);
+            dynamicsProcessing = effect;
+            Log.i(TAG, "Enabled test global attenuation at -20 dB");
+        } catch (RuntimeException exception) {
+            Log.e(TAG, "DynamicsProcessing unavailable; continuing without attenuation", exception);
+            dynamicsProcessing = null;
+        }
+    }
+
+    @android.annotation.TargetApi(Build.VERSION_CODES.P)
+    private void releaseDynamicsProcessing() {
+        if (dynamicsProcessing == null) {
+            return;
+        }
+        try {
+            dynamicsProcessing.setEnabled(false);
+            dynamicsProcessing.release();
+        } catch (RuntimeException exception) {
+            Log.w(TAG, "Unable to cleanly release DynamicsProcessing", exception);
+        } finally {
+            dynamicsProcessing = null;
+        }
     }
 
     private void showAccessibilityOverlay(String text, int currentVolume, int maximumVolume) {

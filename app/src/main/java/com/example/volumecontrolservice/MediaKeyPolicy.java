@@ -4,6 +4,8 @@ import static android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD;
 import static android.view.KeyEvent.KEYCODE_MEDIA_REWIND;
 
 final class MediaKeyPolicy {
+    static final float TEST_ATTENUATION_DB = -20.0f;
+
     enum Feedback {
         NONE,
         VOLUME_UP,
@@ -29,8 +31,16 @@ final class MediaKeyPolicy {
         return "Volume " + currentVolume + " / " + maximumVolume;
     }
 
+    static String attenuationFeedback() {
+        return "TEST ATTENUATION: -20 dB";
+    }
+
     static boolean canUseAccessibilityOverlay(int sdkInt) {
         return sdkInt >= 22;
+    }
+
+    static boolean canUseDynamicsProcessing(int sdkInt) {
+        return sdkInt >= 28;
     }
 
     static Feedback feedbackFor(int keyCode) {
