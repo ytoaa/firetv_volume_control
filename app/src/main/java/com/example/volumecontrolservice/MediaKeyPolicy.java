@@ -2,19 +2,21 @@ package com.example.volumecontrolservice;
 
 import static android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD;
 import static android.view.KeyEvent.KEYCODE_MEDIA_REWIND;
+import static android.view.KeyEvent.KEYCODE_VOLUME_MUTE;
 
 final class MediaKeyPolicy {
     enum Feedback {
         NONE,
         VOLUME_UP,
-        VOLUME_DOWN
+        VOLUME_DOWN,
+        MUTE
     }
 
     private MediaKeyPolicy() {
     }
 
     static boolean shouldConsume(int keyCode) {
-        return isVolumeUpKey(keyCode) || isVolumeDownKey(keyCode);
+        return isVolumeUpKey(keyCode) || isVolumeDownKey(keyCode) || isMuteKey(keyCode);
     }
 
     static boolean isVolumeUpKey(int keyCode) {
@@ -25,10 +27,13 @@ final class MediaKeyPolicy {
         return keyCode == KEYCODE_MEDIA_REWIND;
     }
 
+    static boolean isMuteKey(int keyCode) {
+        return keyCode == KEYCODE_VOLUME_MUTE;
+    }
+
     static String volumeFeedback(int currentVolume, int maximumVolume) {
         return "Volume " + currentVolume + " / " + maximumVolume;
     }
-
 
     static boolean canUseAccessibilityOverlay(int sdkInt) {
         return sdkInt >= 22;
@@ -44,6 +49,9 @@ final class MediaKeyPolicy {
         }
         if (isVolumeDownKey(keyCode)) {
             return Feedback.VOLUME_DOWN;
+        }
+        if (isMuteKey(keyCode)) {
+            return Feedback.MUTE;
         }
         return Feedback.NONE;
     }

@@ -1,8 +1,9 @@
 package com.example.volumecontrolservice;
 
 import static android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD;
-import static android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE;
 import static android.view.KeyEvent.KEYCODE_MEDIA_REWIND;
+import static android.view.KeyEvent.KEYCODE_MEDIA_PLAY_PAUSE;
+import static android.view.KeyEvent.KEYCODE_VOLUME_MUTE;
 import static org.junit.Assert.assertEquals;
 import static org.junit.Assert.assertFalse;
 import static org.junit.Assert.assertTrue;
@@ -11,9 +12,10 @@ import org.junit.Test;
 
 public class MediaKeyPolicyTest {
     @Test
-    public void consumesBothRemappedMediaKeys() {
+    public void consumesBothRemappedMediaKeysAndMute() {
         assertTrue(MediaKeyPolicy.shouldConsume(KEYCODE_MEDIA_FAST_FORWARD));
         assertTrue(MediaKeyPolicy.shouldConsume(KEYCODE_MEDIA_REWIND));
+        assertTrue(MediaKeyPolicy.shouldConsume(KEYCODE_VOLUME_MUTE));
     }
 
     @Test
@@ -39,10 +41,11 @@ public class MediaKeyPolicyTest {
                 MediaKeyPolicy.feedbackFor(KEYCODE_MEDIA_FAST_FORWARD));
         assertEquals(MediaKeyPolicy.Feedback.VOLUME_DOWN,
                 MediaKeyPolicy.feedbackFor(KEYCODE_MEDIA_REWIND));
+        assertEquals(MediaKeyPolicy.Feedback.MUTE,
+                MediaKeyPolicy.feedbackFor(KEYCODE_VOLUME_MUTE));
         assertEquals(MediaKeyPolicy.Feedback.NONE,
                 MediaKeyPolicy.feedbackFor(KEYCODE_MEDIA_PLAY_PAUSE));
     }
-
 
     @Test
     public void onlyApi28AndAboveSupportsDynamicsProcessingPath() {

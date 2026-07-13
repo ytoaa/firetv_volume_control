@@ -1,9 +1,10 @@
 # Fire TV Volume Control
 
-Use a Fire TV remote's media keys to drive an experimental global attenuation effect:
+Use a Fire TV remote's media keys to drive an experimental global DynamicsProcessing gain effect:
 
-- **Fast-forward** → attenuation +2 dB, clamped at 0 dB
-- **Rewind** → attenuation -2 dB, clamped at -40 dB
+- **Fast-forward** → gain +2 dB, clamped at +6 dB
+- **Rewind** → gain -2 dB, clamped at -80 dB
+- **Volume mute** → effect-path mute at -80 dB; press again to restore the last non-muted gain
 
 The app runs as an Android accessibility service and displays an accessibility overlay with
 the requested attenuation and the DynamicsProcessing status. This is an experimental global
@@ -48,19 +49,21 @@ Once the service is enabled:
 
 | Remote button | Action |
 | --- | --- |
-| Fast-forward | Increase attenuation gain by 2 dB toward 0 dB |
-| Rewind | Decrease attenuation gain by 2 dB toward -40 dB |
+| Fast-forward | Increase gain by 2 dB toward +6 dB |
+| Rewind | Decrease gain by 2 dB toward -80 dB |
+| Volume mute | Toggle effect-path near-silence and restore the last non-muted gain |
 
-The app consumes both button press and release events for these two keys. This prevents the foreground app from receiving only one half of a remapped key event.
+The app consumes both button press and release events for all three handled keys. This prevents the foreground app from receiving only one half of a remapped key event.
 
 ## Important Behavior
 
-- While the service is enabled, **Fast-forward** and **Rewind** no longer perform their original playback actions.
+- While the service is enabled, **Fast-forward**, **Rewind**, and **Volume mute** no longer perform their original foreground-app actions.
 - Disable the accessibility service when normal seek controls are needed.
 - Fire OS and individual streaming apps can handle media keys differently. Behavior should be checked on the target Fire TV and the apps you use most.
-- On service connection, the app attempts one global DynamicsProcessing effect at audio session 0 with a 0 dB baseline.
-- The overlay reports `EFFECT ACTIVE` after successful initialization, or `EFFECT ERROR: ...` when the platform rejects or loses the effect.
-- Runtime logs use the `VolumeControlService` tag and include `DYNAMICS_INIT_SUCCESS`, `DYNAMICS_INIT_FAILURE`, `DYNAMICS_STEP`, `DYNAMICS_APPLY_FAILURE`, and `DYNAMICS_RELEASE_*` markers.
+- On service connection, the app attempts one global DynamicsProcessing effect at audio session 0 with the current gain.
+- The experimental gain range is -80 dB to +6 dB. The +6 dB ceiling supports safe positive amplification while limiting clipping/output-boost risk; -80 dB is near-silence and is used for mute because it stays on the effect path rather than claiming a platform mute route.
+- If applying a gain fails, the service releases and recreates the effect, then retries once. Release always clears the initialization guard so reconnects can initialize again.
+- The overlay reports `GAIN`, `MUTE`, and `EFFECT: ACTIVE` or `EFFECT: ERROR: ...`; runtime logs include those states and `DYNAMICS_INIT_SUCCESS`, `DYNAMICS_INIT_FAILURE`, `DYNAMICS_STEP`, `DYNAMICS_APPLY_FAILURE`, `DYNAMICS_APPLY_RETRY_SUCCESS`, and `DYNAMICS_RELEASE_*` markers.
 - The app does not claim that the effect changes audible HDMI output; validate continuously playing audio on the target device.
 
 ## Build

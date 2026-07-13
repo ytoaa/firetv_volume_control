@@ -66,9 +66,10 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
 
         if (event.getAction() == ACTION_DOWN) {
             float gainDb = attenuationController.stepForKey(keyCode);
-            applyCurrentGain(gainDb);
+            applyCurrentGain(gainDb, 0);
             Log.i(TAG, "DYNAMICS_STEP key=" + KeyEvent.keyCodeToString(keyCode)
-                    + " attenuationDb=" + formatDb(gainDb)
+                    + " gainDb=" + formatDb(gainDb)
+                    + " muted=" + attenuationController.isMuted()
                     + " status=" + attenuationController.getStatus());
             showFeedback();
         }
@@ -96,11 +97,13 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
             // the explicit two-channel engine architecture even though the effect is registered.
             DynamicsProcessing effect = new DynamicsProcessing(
                     DYNAMICS_PRIORITY, GLOBAL_AUDIO_SESSION, null);
-            effect.setInputGainAllChannelsTo(DynamicsProcessingController.MAX_GAIN_DB);
+            effect.setInputGainAllChannelsTo(attenuationController.getGainDb());
             effect.setEnabled(true);
             dynamicsProcessing = effect;
             attenuationController.markActive();
-            Log.i(TAG, "DYNAMICS_INIT_SUCCESS session=0 baselineDb=0 effectEnabled=true");
+            Log.i(TAG, "DYNAMICS_INIT_SUCCESS session=0 gainDb="
+                    + formatDb(attenuationController.getGainDb())
+                    + " muted=" + attenuationController.isMuted() + " effectEnabled=true");
         } catch (RuntimeException exception) {
             attenuationController.markError(runtimeMessage(exception));
             dynamicsProcessing = null;
@@ -109,32 +112,49 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
     }
 
     @android.annotation.TargetApi(Build.VERSION_CODES.P)
-    private void applyCurrentGain(float gainDb) {
+    private void applyCurrentGain(float gainDb, int retryCount) {
         if (dynamicsProcessing == null || attenuationController.getStatus()
                 != DynamicsProcessingController.Status.ACTIVE) {
             return;
         }
         try {
             dynamicsProcessing.setInputGainAllChannelsTo(gainDb);
+            Log.i(TAG, "DYNAMICS_APPLY_SUCCESS gainDb=" + formatDb(gainDb)
+                    + " muted=" + attenuationController.isMuted());
         } catch (RuntimeException exception) {
-            attenuationController.markError(runtimeMessage(exception));
-            Log.e(TAG, "DYNAMICS_APPLY_FAILURE attenuationDb=" + formatDb(gainDb), exception);
+            String message = runtimeMessage(exception);
+            Log.e(TAG, "DYNAMICS_APPLY_FAILURE gainDb=" + formatDb(gainDb)
+                    + " retryCount=" + retryCount, exception);
+            if (DynamicsProcessingController.shouldRetryGainApply(retryCount)) {
+                // A stale/lost effect can fail on apply. Release and recreate it once, then
+                // reapply the requested gain through initialization.
+                releaseDynamicsProcessing();
+                initializeDynamicsProcessingOnce();
+                if (dynamicsProcessing != null && attenuationController.getStatus()
+                        == DynamicsProcessingController.Status.ACTIVE) {
+                    Log.i(TAG, "DYNAMICS_APPLY_RETRY_SUCCESS gainDb=" + formatDb(gainDb));
+                    return;
+                }
+            }
+            attenuationController.markError(message);
         }
     }
 
     @android.annotation.TargetApi(Build.VERSION_CODES.P)
     private void releaseDynamicsProcessing() {
-        if (dynamicsProcessing == null) {
-            return;
-        }
         try {
-            dynamicsProcessing.setEnabled(false);
-            dynamicsProcessing.release();
-            Log.i(TAG, "DYNAMICS_RELEASE_SUCCESS session=0");
+            if (dynamicsProcessing != null) {
+                dynamicsProcessing.setEnabled(false);
+                dynamicsProcessing.release();
+                Log.i(TAG, "DYNAMICS_RELEASE_SUCCESS session=0");
+            }
         } catch (RuntimeException exception) {
             Log.w(TAG, "DYNAMICS_RELEASE_FAILURE session=0", exception);
         } finally {
             dynamicsProcessing = null;
+            // Release is also the reconnect boundary: always allow a fresh initialization,
+            // including when the effect reference was already null.
+            dynamicsInitializationAttempted = false;
         }
     }
 
