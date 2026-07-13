@@ -58,6 +58,16 @@ public class DynamicsProcessingControllerTest {
     }
 
     @Test
+    public void handledKeyAppliesConvertedDbRatherThanLogicalLevel() {
+        DynamicsProcessingController controller = new DynamicsProcessingController();
+
+        assertEquals(2.0f, VolumeControlService.gainForHandledKey(
+                controller, KEYCODE_MEDIA_FAST_FORWARD), 0.0001f);
+        assertEquals(-100.0f, VolumeControlService.gainForHandledKey(
+                controller, KEYCODE_VOLUME_MUTE), 0.0001f);
+    }
+
+    @Test
     public void muteRestoresLastNonMutedLevel() {
         DynamicsProcessingController controller = new DynamicsProcessingController();
         controller.setLevel(28);

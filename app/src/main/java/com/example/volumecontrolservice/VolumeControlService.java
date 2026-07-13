@@ -76,7 +76,7 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
         if (event.getAction() == ACTION_DOWN) {
             // The settings activity can change this while the service remains connected.
             attenuationController.setStep(volumeSettings.getStep());
-            float gainDb = attenuationController.stepForKey(keyCode);
+            float gainDb = gainForHandledKey(attenuationController, keyCode);
             applyCurrentGain(gainDb, 0);
             Log.i(TAG, "DYNAMICS_STEP key=" + KeyEvent.keyCodeToString(keyCode)
                     + " gainDb=" + formatDb(gainDb)
@@ -88,6 +88,11 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
         // Consume both key-down and key-up so the foreground app cannot receive
         // only half of a remapped media-key event.
         return true;
+    }
+
+    static float gainForHandledKey(DynamicsProcessingController controller, int keyCode) {
+        controller.stepForKey(keyCode);
+        return controller.getGainDb();
     }
 
     @android.annotation.TargetApi(Build.VERSION_CODES.P)
