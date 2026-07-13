@@ -2,10 +2,11 @@
 
 Use a Fire TV remote's media keys to drive an experimental global DynamicsProcessing gain effect:
 
-- **Fast-forward** → gain +2 dB, clamped at +6 dB
-- **Rewind** → gain -2 dB, clamped at -80 dB
-- **Volume mute** → effect-path mute at -80 dB; press again to restore the last non-muted gain
+- **Fast-forward** → increase the user-facing volume level by the configured step (default 2), clamped to 40; from level 0/mute, it exits mute at the configured step (default level 2), rather than restoring the previous level
+- **Rewind** → decrease the user-facing volume level by the configured step (default 2), clamped to 0
+- **Volume mute** → level 0 / -100 dB target; if the effect rejects that target, safely falls back to -80 dB while preserving logical mute; physical Volume Mute again restores the last non-muted level
 
+Levels are integer values from 0 to 40. Level 0 is a separate mute state targeting -100 dB. Levels 1–20 map linearly from -20 dB to 0 dB, and levels 20–40 map linearly from 0 dB to +20 dB; level 20 is exactly 0 dB. The overlay displays levels, not dB, and shows ACTIVE, MUTED, or ERROR status. If mute fallback is used, the overlay reports the -80 dB fallback.
 The app runs as an Android accessibility service and displays an accessibility overlay with
 the requested attenuation and the DynamicsProcessing status. This is an experimental global
 output effect; a successful key event or log entry is not proof that HDMI audio is audibly
@@ -49,10 +50,11 @@ Once the service is enabled:
 
 | Remote button | Action |
 | --- | --- |
-| Fast-forward | Increase gain by 2 dB toward +6 dB |
-| Rewind | Decrease gain by 2 dB toward -80 dB |
-| Volume mute | Toggle effect-path near-silence and restore the last non-muted gain |
+| Fast-forward | Increase level by the configured step (default 2); from level 0/mute, exit at the configured step (default level 2) |
+| Rewind | Decrease level by the configured step (default 2) |
+| Volume mute | Toggle level 0 and restore the last non-muted level on the next physical Volume Mute press |
 
+Open **VolumeControlService** from the Fire TV app list to choose **1, 2, 4, or 8 levels** per Fast-forward/Rewind press. The selected value is saved immediately and survives service restarts.
 The app consumes both button press and release events for all three handled keys. This prevents the foreground app from receiving only one half of a remapped key event.
 
 ## Important Behavior
@@ -61,10 +63,10 @@ The app consumes both button press and release events for all three handled keys
 - Disable the accessibility service when normal seek controls are needed.
 - Fire OS and individual streaming apps can handle media keys differently. Behavior should be checked on the target Fire TV and the apps you use most.
 - On service connection, the app attempts one global DynamicsProcessing effect at audio session 0 with the current gain.
-- The experimental gain range is -80 dB to +6 dB. The +6 dB ceiling supports safe positive amplification while limiting clipping/output-boost risk; -80 dB is near-silence and is used for mute because it stays on the effect path rather than claiming a platform mute route.
-- If applying a gain fails, the service releases and recreates the effect, then retries once. Release always clears the initialization guard so reconnects can initialize again.
-- The overlay reports `GAIN`, `MUTE`, and `EFFECT: ACTIVE` or `EFFECT: ERROR: ...`; runtime logs include those states and `DYNAMICS_INIT_SUCCESS`, `DYNAMICS_INIT_FAILURE`, `DYNAMICS_STEP`, `DYNAMICS_APPLY_FAILURE`, `DYNAMICS_APPLY_RETRY_SUCCESS`, and `DYNAMICS_RELEASE_*` markers.
-- The app does not claim that the effect changes audible HDMI output; validate continuously playing audio on the target device.
+- The experimental gain range is a -100 dB mute target, -20 dB to 0 dB attenuation, and 0 dB to +20 dB amplification. If the effect rejects the -100 dB mute target, the service applies -80 dB, logs `DYNAMICS_MUTE_FALLBACK`, and keeps logical level 0; the overlay makes the fallback visible.
+- If applying a non-mute gain fails, the service releases and recreates the effect, then retries once. Release always clears the initialization guard so reconnects can initialize again.
+- The overlay reports the logical level and `ACTIVE`, `MUTED`, or `ERROR` state; mute fallback is explicitly shown as `MUTED (effect fallback -80 dB)`. Runtime logs include those states and `DYNAMICS_INIT_SUCCESS`, `DYNAMICS_INIT_FAILURE`, `DYNAMICS_STEP`, `DYNAMICS_APPLY_FAILURE`, `DYNAMICS_APPLY_RETRY_SUCCESS`, `DYNAMICS_MUTE_FALLBACK`, and `DYNAMICS_RELEASE_*` markers.
+- HDMI output is experimental and device/route dependent: the global DynamicsProcessing effect may be accepted and report success without changing what is audible over a particular HDMI path. A successful key event, overlay, or log entry is not proof of audible HDMI control; validate with continuously playing audio on the target Fire TV and route.
 
 ## Build
 
