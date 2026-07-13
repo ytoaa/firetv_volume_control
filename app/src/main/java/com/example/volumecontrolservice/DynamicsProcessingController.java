@@ -85,7 +85,10 @@ final class DynamicsProcessingController {
 
     int stepForKey(int keyCode) {
         if (MediaKeyPolicy.isMuteKey(keyCode)) return toggleMute();
-        if (muted) return level;
+        if (muted) {
+            if (MediaKeyPolicy.isVolumeUpKey(keyCode)) setLevel(step);
+            return level;
+        }
         if (MediaKeyPolicy.isVolumeUpKey(keyCode)) setLevel(level + step);
         else if (MediaKeyPolicy.isVolumeDownKey(keyCode)) setLevel(level - step);
         return level;

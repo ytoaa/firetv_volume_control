@@ -91,12 +91,19 @@ public class DynamicsProcessingControllerTest {
     }
 
     @Test
-    public void mutedControllerIgnoresLevelKeys() {
+    public void fastForwardFromLevelZeroUnmutesAtConfiguredStep() {
         DynamicsProcessingController controller = new DynamicsProcessingController();
-        controller.stepForKey(KEYCODE_VOLUME_MUTE);
+        controller.setLevel(18);
 
-        assertEquals(0, controller.stepForKey(KEYCODE_MEDIA_FAST_FORWARD));
+        for (int press = 0; press < 9; press++) {
+            controller.stepForKey(KEYCODE_MEDIA_REWIND);
+        }
+
+        assertEquals(0, controller.getLevel());
         assertTrue(controller.isMuted());
+        assertEquals(2, controller.stepForKey(KEYCODE_MEDIA_FAST_FORWARD));
+        assertFalse(controller.isMuted());
+        assertEquals(2, controller.getLevel());
     }
 
     @Test
