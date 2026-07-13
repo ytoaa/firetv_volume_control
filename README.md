@@ -1,11 +1,14 @@
 # Fire TV Volume Control
 
-Remap a Fire TV remote's media keys to volume controls:
+Use a Fire TV remote's media keys to drive an experimental global attenuation effect:
 
-- **Fast-forward** → volume up
-- **Rewind** → volume down
+- **Fast-forward** → attenuation +2 dB, clamped at 0 dB
+- **Rewind** → attenuation -2 dB, clamped at -40 dB
 
-The app runs as an Android accessibility service and displays the system volume UI.
+The app runs as an Android accessibility service and displays an accessibility overlay with
+the requested attenuation and the DynamicsProcessing status. This is an experimental global
+output effect; a successful key event or log entry is not proof that HDMI audio is audibly
+affected on a particular Fire TV route.
 
 ## Install
 
@@ -45,8 +48,8 @@ Once the service is enabled:
 
 | Remote button | Action |
 | --- | --- |
-| Fast-forward | Raise media volume |
-| Rewind | Lower media volume |
+| Fast-forward | Increase attenuation gain by 2 dB toward 0 dB |
+| Rewind | Decrease attenuation gain by 2 dB toward -40 dB |
 
 The app consumes both button press and release events for these two keys. This prevents the foreground app from receiving only one half of a remapped key event.
 
@@ -55,7 +58,10 @@ The app consumes both button press and release events for these two keys. This p
 - While the service is enabled, **Fast-forward** and **Rewind** no longer perform their original playback actions.
 - Disable the accessibility service when normal seek controls are needed.
 - Fire OS and individual streaming apps can handle media keys differently. Behavior should be checked on the target Fire TV and the apps you use most.
-- The current release uses the Fire TV/Android system volume UI; no overlay permission is needed for normal use.
+- On service connection, the app attempts one global DynamicsProcessing effect at audio session 0 with a 0 dB baseline.
+- The overlay reports `EFFECT ACTIVE` after successful initialization, or `EFFECT ERROR: ...` when the platform rejects or loses the effect.
+- Runtime logs use the `VolumeControlService` tag and include `DYNAMICS_INIT_SUCCESS`, `DYNAMICS_INIT_FAILURE`, `DYNAMICS_STEP`, `DYNAMICS_APPLY_FAILURE`, and `DYNAMICS_RELEASE_*` markers.
+- The app does not claim that the effect changes audible HDMI output; validate continuously playing audio on the target device.
 
 ## Build
 

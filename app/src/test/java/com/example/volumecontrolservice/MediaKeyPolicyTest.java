@@ -43,10 +43,6 @@ public class MediaKeyPolicyTest {
                 MediaKeyPolicy.feedbackFor(KEYCODE_MEDIA_PLAY_PAUSE));
     }
 
-    @Test
-    public void formatsExplicitTestAttenuationFeedback() {
-        assertEquals("TEST ATTENUATION: -20 dB", MediaKeyPolicy.attenuationFeedback());
-    }
 
     @Test
     public void onlyApi28AndAboveSupportsDynamicsProcessingPath() {

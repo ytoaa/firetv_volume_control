@@ -1,11 +1,9 @@
 package com.example.volumecontrolservice;
 
-import static android.media.AudioManager.STREAM_MUSIC;
 import static android.view.KeyEvent.ACTION_DOWN;
 import static android.widget.Toast.LENGTH_SHORT;
 
 import android.content.Context;
-import android.media.AudioManager;
 import android.media.audiofx.DynamicsProcessing;
 import android.os.Build;
 import android.os.Handler;
@@ -28,17 +26,20 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
     private static final int OUTPUT_CHANNEL_COUNT = 2;
 
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
-    private AudioManager audioManager;
+    private final DynamicsProcessingController attenuationController =
+            new DynamicsProcessingController();
+    private android.media.audiofx.DynamicsProcessing dynamicsProcessing;
     private WindowManager windowManager;
     private View feedbackView;
-    private DynamicsProcessing dynamicsProcessing;
+    private boolean dynamicsInitializationAttempted;
 
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
-        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
         windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
-        Log.i(TAG, "service is connected");
+        Log.i(TAG, "service connected; initializing global DynamicsProcessing");
+        initializeDynamicsProcessingOnce();
+        showFeedback();
     }
 
     @Override
@@ -65,7 +66,11 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
         }
 
         if (event.getAction() == ACTION_DOWN) {
-            applyTestAttenuation();
+            float gainDb = attenuationController.stepForKey(keyCode);
+            applyCurrentGain(gainDb);
+            Log.i(TAG, "DYNAMICS_STEP key=" + KeyEvent.keyCodeToString(keyCode)
+                    + " attenuationDb=" + formatDb(gainDb)
+                    + " status=" + attenuationController.getStatus());
             showFeedback();
         }
 
@@ -74,32 +79,19 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
         return true;
     }
 
-    private void showFeedback() {
-        if (audioManager == null) {
-            return;
-        }
-        final int currentVolume = audioManager.getStreamVolume(STREAM_MUSIC);
-        final int maximumVolume = audioManager.getStreamMaxVolume(STREAM_MUSIC);
-        final String text = MediaKeyPolicy.attenuationFeedback();
-
-        mainHandler.post(() -> {
-            if (!MediaKeyPolicy.canUseAccessibilityOverlay(Build.VERSION.SDK_INT)) {
-                Toast.makeText(this, text, LENGTH_SHORT).show();
-                return;
-            }
-            showAccessibilityOverlay(text, currentVolume, maximumVolume);
-        });
-    }
-
     @android.annotation.TargetApi(Build.VERSION_CODES.P)
-    private void applyTestAttenuation() {
+    private void initializeDynamicsProcessingOnce() {
+        if (dynamicsInitializationAttempted) {
+            return;
+        }
+        dynamicsInitializationAttempted = true;
         if (!MediaKeyPolicy.canUseDynamicsProcessing(Build.VERSION.SDK_INT)) {
-            Log.w(TAG, "DynamicsProcessing test attenuation requires API 28+");
+            String message = "requires API 28+ (SDK " + Build.VERSION.SDK_INT + ")";
+            attenuationController.markError(message);
+            Log.e(TAG, "DYNAMICS_INIT_FAILURE session=0 " + message);
             return;
         }
-        if (dynamicsProcessing != null) {
-            return;
-        }
+
         try {
             DynamicsProcessing.Config config = new DynamicsProcessing.Config.Builder(
                     DynamicsProcessing.VARIANT_FAVOR_TIME_RESOLUTION,
@@ -108,17 +100,33 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
                     false, 0,
                     false, 0,
                     false)
-                    .setInputGainAllChannelsTo(MediaKeyPolicy.TEST_ATTENUATION_DB)
+                    .setInputGainAllChannelsTo(DynamicsProcessingController.MAX_GAIN_DB)
                     .build();
             DynamicsProcessing effect = new DynamicsProcessing(
                     DYNAMICS_PRIORITY, GLOBAL_AUDIO_SESSION, config);
-            effect.setInputGainAllChannelsTo(MediaKeyPolicy.TEST_ATTENUATION_DB);
+            effect.setInputGainAllChannelsTo(DynamicsProcessingController.MAX_GAIN_DB);
             effect.setEnabled(true);
             dynamicsProcessing = effect;
-            Log.i(TAG, "Enabled test global attenuation at -20 dB");
+            attenuationController.markActive();
+            Log.i(TAG, "DYNAMICS_INIT_SUCCESS session=0 baselineDb=0 effectEnabled=true");
         } catch (RuntimeException exception) {
-            Log.e(TAG, "DynamicsProcessing unavailable; continuing without attenuation", exception);
+            attenuationController.markError(runtimeMessage(exception));
             dynamicsProcessing = null;
+            Log.e(TAG, "DYNAMICS_INIT_FAILURE session=0 baselineDb=0", exception);
+        }
+    }
+
+    @android.annotation.TargetApi(Build.VERSION_CODES.P)
+    private void applyCurrentGain(float gainDb) {
+        if (dynamicsProcessing == null || attenuationController.getStatus()
+                != DynamicsProcessingController.Status.ACTIVE) {
+            return;
+        }
+        try {
+            dynamicsProcessing.setInputGainAllChannelsTo(gainDb);
+        } catch (RuntimeException exception) {
+            attenuationController.markError(runtimeMessage(exception));
+            Log.e(TAG, "DYNAMICS_APPLY_FAILURE attenuationDb=" + formatDb(gainDb), exception);
         }
     }
 
@@ -130,14 +138,26 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
         try {
             dynamicsProcessing.setEnabled(false);
             dynamicsProcessing.release();
+            Log.i(TAG, "DYNAMICS_RELEASE_SUCCESS session=0");
         } catch (RuntimeException exception) {
-            Log.w(TAG, "Unable to cleanly release DynamicsProcessing", exception);
+            Log.w(TAG, "DYNAMICS_RELEASE_FAILURE session=0", exception);
         } finally {
             dynamicsProcessing = null;
         }
     }
 
-    private void showAccessibilityOverlay(String text, int currentVolume, int maximumVolume) {
+    private void showFeedback() {
+        final String text = attenuationController.overlayText();
+        mainHandler.post(() -> {
+            if (!MediaKeyPolicy.canUseAccessibilityOverlay(Build.VERSION.SDK_INT)) {
+                Toast.makeText(this, text, LENGTH_SHORT).show();
+                return;
+            }
+            showAccessibilityOverlay(text);
+        });
+    }
+
+    private void showAccessibilityOverlay(String text) {
         if (windowManager == null) {
             return;
         }
@@ -163,13 +183,25 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
             }
         }
 
-        TextView volumeText = feedbackView.findViewById(R.id.volume_text);
-        ProgressBar volumeProgress = feedbackView.findViewById(R.id.volume_progress);
-        volumeText.setText(text);
-        volumeProgress.setMax(maximumVolume);
-        volumeProgress.setProgress(currentVolume);
+        TextView attenuationText = feedbackView.findViewById(R.id.volume_text);
+        ProgressBar attenuationProgress = feedbackView.findViewById(R.id.volume_progress);
+        attenuationText.setText(text);
+        attenuationProgress.setMax((int) (DynamicsProcessingController.MAX_GAIN_DB
+                - DynamicsProcessingController.MIN_GAIN_DB));
+        attenuationProgress.setProgress((int) (attenuationController.getGainDb()
+                - DynamicsProcessingController.MIN_GAIN_DB));
         mainHandler.removeCallbacks(dismissFeedbackRunnable);
         mainHandler.postDelayed(dismissFeedbackRunnable, FEEDBACK_DURATION_MS);
+    }
+
+    private static String formatDb(float gainDb) {
+        return String.format(java.util.Locale.US, "%.0f", gainDb);
+    }
+
+    private static String runtimeMessage(RuntimeException exception) {
+        String message = exception.getMessage();
+        return exception.getClass().getSimpleName()
+                + (message == null || message.length() == 0 ? "" : ": " + message);
     }
 
     private final Runnable dismissFeedbackRunnable = this::dismissFeedback;
