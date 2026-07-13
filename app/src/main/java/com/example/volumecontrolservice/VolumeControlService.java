@@ -2,9 +2,6 @@ package com.example.volumecontrolservice;
 
 import static android.media.AudioManager.STREAM_MUSIC;
 import static android.view.KeyEvent.ACTION_DOWN;
-import static android.view.KeyEvent.ACTION_UP;
-import static android.view.KeyEvent.KEYCODE_MEDIA_FAST_FORWARD;
-import static android.view.KeyEvent.KEYCODE_MEDIA_REWIND;
 import static android.widget.Toast.LENGTH_SHORT;
 
 import android.app.Dialog;
@@ -49,20 +46,22 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
     }
 
     private boolean handleKeyEvent(KeyEvent event) {
-        int action = event.getAction();
         int keyCode = event.getKeyCode();
-        if (keyCode == KEYCODE_MEDIA_FAST_FORWARD || keyCode == KEYCODE_MEDIA_REWIND) {
-            if (action == KeyEvent.ACTION_DOWN) {
-                if (keyCode == KEYCODE_MEDIA_FAST_FORWARD) {
-                    increaseVolume();
-                } else {
-                    reduceVolume();
-                }
-//                showDialog();
-                return true;
+        if (!MediaKeyPolicy.shouldConsume(keyCode)) {
+            return super.onKeyEvent(event);
+        }
+
+        if (event.getAction() == ACTION_DOWN) {
+            if (MediaKeyPolicy.isVolumeUpKey(keyCode)) {
+                increaseVolume();
+            } else {
+                reduceVolume();
             }
         }
-        return super.onKeyEvent(event);
+
+        // Consume both key-down and key-up to prevent the foreground app from
+        // receiving only half of a remapped media-key event.
+        return true;
     }
 
     private void showDialog() {
