@@ -29,6 +29,10 @@ final class MediaKeyPolicy {
         return "Volume " + currentVolume + " / " + maximumVolume;
     }
 
+    static boolean canUseAccessibilityOverlay(int sdkInt) {
+        return sdkInt >= 22;
+    }
+
     static Feedback feedbackFor(int keyCode) {
         if (isVolumeUpKey(keyCode)) {
             return Feedback.VOLUME_UP;

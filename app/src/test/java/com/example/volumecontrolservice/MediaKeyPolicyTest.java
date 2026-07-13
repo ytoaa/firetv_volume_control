@@ -27,6 +27,13 @@ public class MediaKeyPolicyTest {
     }
 
     @Test
+    public void usesAccessibilityOverlayOnSupportedAndroidVersions() {
+        assertTrue(MediaKeyPolicy.canUseAccessibilityOverlay(22));
+        assertTrue(MediaKeyPolicy.canUseAccessibilityOverlay(32));
+        assertFalse(MediaKeyPolicy.canUseAccessibilityOverlay(21));
+    }
+
+    @Test
     public void requestsVisibleFeedbackForHandledKeysOnly() {
         assertEquals(MediaKeyPolicy.Feedback.VOLUME_UP,
                 MediaKeyPolicy.feedbackFor(KEYCODE_MEDIA_FAST_FORWARD));

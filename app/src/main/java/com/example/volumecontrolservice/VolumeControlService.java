@@ -4,48 +4,54 @@ import static android.media.AudioManager.STREAM_MUSIC;
 import static android.view.KeyEvent.ACTION_DOWN;
 import static android.widget.Toast.LENGTH_SHORT;
 
-import android.app.Dialog;
 import android.content.Context;
-import android.database.ContentObserver;
 import android.media.AudioManager;
 import android.os.Build;
 import android.os.Handler;
 import android.os.Looper;
-import android.provider.Settings;
 import android.util.Log;
 import android.view.Gravity;
 import android.view.KeyEvent;
-import android.view.Window;
+import android.view.LayoutInflater;
+import android.view.View;
 import android.view.WindowManager;
-import android.view.accessibility.AccessibilityEvent;
 import android.widget.ProgressBar;
+import android.widget.TextView;
 import android.widget.Toast;
 
 public class VolumeControlService extends android.accessibilityservice.AccessibilityService {
-    private static final String TAG = "yolo volume_control";
+    private static final String TAG = "VolumeControlService";
+    private static final long FEEDBACK_DURATION_MS = 1500L;
+
+    private final Handler mainHandler = new Handler(Looper.getMainLooper());
     private AudioManager audioManager;
-    private Dialog volumeDialog;
-    private final Handler dismissHandler = new Handler(Looper.getMainLooper());
+    private WindowManager windowManager;
+    private View feedbackView;
 
     @Override
     protected void onServiceConnected() {
         super.onServiceConnected();
+        audioManager = (AudioManager) getSystemService(Context.AUDIO_SERVICE);
+        windowManager = (WindowManager) getSystemService(Context.WINDOW_SERVICE);
         Log.i(TAG, "service is connected");
-        audioManager = (AudioManager)getSystemService(Context.AUDIO_SERVICE);
     }
 
     @Override
-    public void onAccessibilityEvent(AccessibilityEvent accessibilityEvent) { }
+    public void onAccessibilityEvent(android.view.accessibility.AccessibilityEvent event) { }
 
     @Override
-    public void onInterrupt() { }
+    public void onInterrupt() {
+        dismissFeedback();
+    }
+
+    @Override
+    public void onDestroy() {
+        dismissFeedback();
+        super.onDestroy();
+    }
 
     @Override
     protected boolean onKeyEvent(KeyEvent event) {
-        return handleKeyEvent(event);
-    }
-
-    private boolean handleKeyEvent(KeyEvent event) {
         int keyCode = event.getKeyCode();
         if (!MediaKeyPolicy.shouldConsume(keyCode)) {
             return super.onKeyEvent(event);
@@ -53,106 +59,89 @@ public class VolumeControlService extends android.accessibilityservice.Accessibi
 
         if (event.getAction() == ACTION_DOWN) {
             if (MediaKeyPolicy.isVolumeUpKey(keyCode)) {
-                increaseVolume();
+                adjustVolume(AudioManager.ADJUST_RAISE);
             } else {
-                reduceVolume();
+                adjustVolume(AudioManager.ADJUST_LOWER);
             }
-            showFeedback(MediaKeyPolicy.feedbackFor(keyCode));
+            showFeedback();
         }
 
-        // Consume both key-down and key-up to prevent the foreground app from
-        // receiving only half of a remapped media-key event.
+        // Consume both key-down and key-up so the foreground app cannot receive
+        // only half of a remapped media-key event.
         return true;
     }
 
-    private void showFeedback(MediaKeyPolicy.Feedback feedback) {
-        if (feedback == MediaKeyPolicy.Feedback.NONE) {
+    private void adjustVolume(int direction) {
+        if (audioManager == null) {
+            Log.w(TAG, "Ignoring volume key before service connection");
             return;
         }
-        int currentVolume = audioManager.getStreamVolume(STREAM_MUSIC);
-        int maximumVolume = audioManager.getStreamMaxVolume(STREAM_MUSIC);
-        Toast.makeText(this, MediaKeyPolicy.volumeFeedback(currentVolume, maximumVolume), LENGTH_SHORT).show();
+        audioManager.adjustStreamVolume(STREAM_MUSIC, direction, AudioManager.FLAG_SHOW_UI);
     }
 
-    private void showDialog() {
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-            final boolean overlayEnabled = Settings.canDrawOverlays(this);
-            if(!overlayEnabled){
-                Toast.makeText(this, "Enable draw over apps permission", LENGTH_SHORT).show();
-            }
-            Log.i(TAG, "overlay: " + overlayEnabled);
-            if (!overlayEnabled) return;
+    private void showFeedback() {
+        if (audioManager == null) {
+            return;
         }
+        final int currentVolume = audioManager.getStreamVolume(STREAM_MUSIC);
+        final int maximumVolume = audioManager.getStreamMaxVolume(STREAM_MUSIC);
+        final String text = MediaKeyPolicy.volumeFeedback(currentVolume, maximumVolume);
 
-        new Handler(Looper.getMainLooper()).post(() -> {
-            // If dialog already exists and is showing, update it instead of creating new
-            if (volumeDialog != null && volumeDialog.isShowing()) {
-                ProgressBar volumeProgress = volumeDialog.findViewById(R.id.volume_progress);
-                volumeProgress.setProgress(audioManager.getStreamVolume(STREAM_MUSIC));
-                scheduleAutoDismiss();
-                return;   // or update contents if needed
+        mainHandler.post(() -> {
+            if (!MediaKeyPolicy.canUseAccessibilityOverlay(Build.VERSION.SDK_INT)) {
+                Toast.makeText(this, text, LENGTH_SHORT).show();
+                return;
             }
-
-            // create the dialog
-            volumeDialog = new Dialog(this);
-            volumeDialog.requestWindowFeature(Window.FEATURE_NO_TITLE);
-            volumeDialog.setContentView(R.layout.volume_control);
-            volumeDialog.getWindow().setBackgroundDrawableResource(android.R.color.background_dark);
-            volumeDialog.setCancelable(false);
-            Window window = volumeDialog.getWindow();
-            WindowManager.LayoutParams params = window.getAttributes();
-
-            params.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
-            params.y = 80;  // adjust distance from bottom if needed
-
-            window.setAttributes(params);
-
-            // create and set volume progress bar
-            ProgressBar volumeProgress = volumeDialog.findViewById(R.id.volume_progress);
-            volumeProgress.setMax(audioManager.getStreamMaxVolume(STREAM_MUSIC));
-            volumeProgress.setProgress(audioManager.getStreamVolume(STREAM_MUSIC));
-            volumeProgress.setProgress(audioManager.getStreamVolume(STREAM_MUSIC));
-
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                volumeDialog.getWindow().setType(WindowManager.LayoutParams.TYPE_APPLICATION_OVERLAY);
-            }else{
-                volumeDialog.getWindow().setType(WindowManager.LayoutParams.TYPE_SYSTEM_ALERT);
-            }
-
-            volumeDialog.show();
-
-            // ⏱️ Start auto-dismiss timer
-            scheduleAutoDismiss();
+            showAccessibilityOverlay(text, currentVolume, maximumVolume);
         });
     }
 
-    private final Runnable dismissRunnable = () -> {
-        if (volumeDialog != null && volumeDialog.isShowing()) {
-            volumeDialog.dismiss();
+    private void showAccessibilityOverlay(String text, int currentVolume, int maximumVolume) {
+        if (windowManager == null) {
+            return;
         }
-    };
+        if (feedbackView == null) {
+            feedbackView = LayoutInflater.from(this).inflate(R.layout.volume_control, null);
+            WindowManager.LayoutParams params = new WindowManager.LayoutParams(
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.WRAP_CONTENT,
+                    WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
+                    WindowManager.LayoutParams.FLAG_NOT_FOCUSABLE
+                            | WindowManager.LayoutParams.FLAG_NOT_TOUCHABLE
+                            | WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
+                    android.graphics.PixelFormat.TRANSLUCENT);
+            params.gravity = Gravity.BOTTOM | Gravity.CENTER_HORIZONTAL;
+            params.y = 96;
+            try {
+                windowManager.addView(feedbackView, params);
+            } catch (WindowManager.BadTokenException | SecurityException exception) {
+                Log.e(TAG, "Unable to add accessibility feedback overlay", exception);
+                feedbackView = null;
+                Toast.makeText(this, text, LENGTH_SHORT).show();
+                return;
+            }
+        }
 
-    private void scheduleAutoDismiss() {
-        // Cancel any previous dismiss timer
-        dismissHandler.removeCallbacks(dismissRunnable);
-
-        // Auto-close after 1 seconds
-        dismissHandler.postDelayed(dismissRunnable, 1000);
+        TextView volumeText = feedbackView.findViewById(R.id.volume_text);
+        ProgressBar volumeProgress = feedbackView.findViewById(R.id.volume_progress);
+        volumeText.setText(text);
+        volumeProgress.setMax(maximumVolume);
+        volumeProgress.setProgress(currentVolume);
+        mainHandler.removeCallbacks(dismissFeedbackRunnable);
+        mainHandler.postDelayed(dismissFeedbackRunnable, FEEDBACK_DURATION_MS);
     }
 
-    private void increaseVolume() {
-        audioManager.adjustStreamVolume(
-                STREAM_MUSIC,
-                AudioManager.ADJUST_RAISE,
-                AudioManager.FLAG_SHOW_UI
-        );
-    }
+    private final Runnable dismissFeedbackRunnable = this::dismissFeedback;
 
-    private void reduceVolume() {
-        audioManager.adjustStreamVolume(
-                STREAM_MUSIC,
-                AudioManager.ADJUST_LOWER,
-                AudioManager.FLAG_SHOW_UI
-        );
+    private void dismissFeedback() {
+        mainHandler.removeCallbacks(dismissFeedbackRunnable);
+        if (feedbackView != null && windowManager != null) {
+            try {
+                windowManager.removeView(feedbackView);
+            } catch (IllegalArgumentException exception) {
+                Log.w(TAG, "Feedback overlay was already removed", exception);
+            }
+        }
+        feedbackView = null;
     }
 }
